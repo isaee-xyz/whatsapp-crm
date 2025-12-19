@@ -1,0 +1,52 @@
+# Whatomate Configuration Example
+# Copy this to config.toml and update values
+
+[app]
+name = "Whatomate"
+environment = "development"  # development, staging, production
+debug = true
+
+[server]
+host = "0.0.0.0"
+port = 8080
+read_timeout = 30
+write_timeout = 30
+
+[database]
+host = "localhost"
+port = 5432
+user = "whatomate"
+password = "whatomate123"
+name = "whatomate"
+ssl_mode = "disable"
+max_open_conns = 25
+max_idle_conns = 5
+conn_max_lifetime = 300
+
+[redis]
+host = "localhost"
+port = 6379
+password = ""
+db = 0
+
+[jwt]
+secret = "your-super-secret-jwt-key-change-in-production"
+access_expiry_mins = 15
+refresh_expiry_days = 7
+
+[whatsapp]
+webhook_verify_token = "your-webhook-verify-token"
+api_version = "v18.0"
+
+[ai]
+openai_key = ""
+anthropic_key = ""
+google_key = ""
+
+[storage]
+type = "local"  # local, s3
+local_path = "./uploads"
+s3_bucket = ""
+s3_region = ""
+s3_key = ""
+s3_secret = ""

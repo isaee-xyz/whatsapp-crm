@@ -1,0 +1,1018 @@
+package handlers
+
+import (
+	"encoding/json"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/valyala/fasthttp"
+	"github.com/whatomate/whatomate/internal/models"
+	"github.com/zerodha/fastglue"
+	"gorm.io/gorm"
+)
+
+// ChatbotSettingsResponse represents the response for chatbot settings
+type ChatbotSettingsResponse struct {
+	Enabled               bool   `json:"enabled"`
+	GreetingMessage       string `json:"greeting_message"`
+	FallbackMessage       string `json:"fallback_message"`
+	SessionTimeoutMinutes int    `json:"session_timeout_minutes"`
+	AIEnabled             bool   `json:"ai_enabled"`
+	AIProvider            string `json:"ai_provider"`
+	AIModel               string `json:"ai_model"`
+	AIMaxTokens           int    `json:"ai_max_tokens"`
+	AISystemPrompt        string `json:"ai_system_prompt"`
+}
+
+// ChatbotStatsResponse represents chatbot statistics
+type ChatbotStatsResponse struct {
+	TotalSessions   int64 `json:"total_sessions"`
+	ActiveSessions  int64 `json:"active_sessions"`
+	MessagesHandled int64 `json:"messages_handled"`
+	AIResponses     int64 `json:"ai_responses"`
+	AgentTransfers  int64 `json:"agent_transfers"`
+	KeywordsCount   int64 `json:"keywords_count"`
+	FlowsCount      int64 `json:"flows_count"`
+	AIContextsCount int64 `json:"ai_contexts_count"`
+}
+
+// KeywordRuleResponse represents a keyword rule for API response
+type KeywordRuleResponse struct {
+	ID              string          `json:"id"`
+	Name            string          `json:"name"`
+	Keywords        []string        `json:"keywords"`
+	MatchType       string          `json:"match_type"`
+	ResponseType    string          `json:"response_type"`
+	ResponseContent json.RawMessage `json:"response_content"`
+	Priority        int             `json:"priority"`
+	Enabled         bool            `json:"enabled"`
+	CreatedAt       string          `json:"created_at"`
+}
+
+// ChatbotFlowResponse represents a chatbot flow for API response
+type ChatbotFlowResponse struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	TriggerKeywords []string `json:"trigger_keywords"`
+	Enabled         bool   `json:"enabled"`
+	StepsCount      int    `json:"steps_count"`
+	CreatedAt       string `json:"created_at"`
+}
+
+// AIContextResponse represents an AI context for API response
+type AIContextResponse struct {
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	ContextType     string   `json:"context_type"`
+	TriggerKeywords []string `json:"trigger_keywords"`
+	StaticContent   string   `json:"static_content"`
+	Enabled         bool     `json:"enabled"`
+	Priority        int      `json:"priority"`
+	CreatedAt       string   `json:"created_at"`
+}
+
+// GetChatbotSettingsImpl returns chatbot settings and stats
+func (a *App) GetChatbotSettingsImpl(r *fastglue.Request) error {
+	orgID, err := a.getOrgIDFromContext(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	// Get or create default settings
+	var settings models.ChatbotSettings
+	result := a.DB.Where("organization_id = ? AND whats_app_account = ?", orgID, "").First(&settings)
+	if result.Error != nil {
+		// Return default settings if none exist
+		settings = models.ChatbotSettings{
+			IsEnabled:          false,
+			DefaultResponse:    "Hello! How can I help you today?",
+			SessionTimeoutMins: 30,
+			AIEnabled:          false,
+		}
+	}
+
+	// Gather stats
+	stats := a.getChatbotStats(orgID)
+
+	settingsResp := ChatbotSettingsResponse{
+		Enabled:               settings.IsEnabled,
+		GreetingMessage:       settings.DefaultResponse,
+		FallbackMessage:       settings.OutOfHoursMessage,
+		SessionTimeoutMinutes: settings.SessionTimeoutMins,
+		AIEnabled:             settings.AIEnabled,
+		AIProvider:            settings.AIProvider,
+		AIModel:               settings.AIModel,
+		AIMaxTokens:           settings.AIMaxTokens,
+		AISystemPrompt:        settings.AISystemPrompt,
+	}
+
+	return r.SendEnvelope(map[string]interface{}{
+		"settings": settingsResp,
+		"stats":    stats,
+	})
+}
+
+// UpdateChatbotSettingsImpl updates chatbot settings
+func (a *App) UpdateChatbotSettingsImpl(r *fastglue.Request) error {
+	orgID, err := a.getOrgIDFromContext(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	var req struct {
+		Enabled               *bool   `json:"enabled"`
+		GreetingMessage       *string `json:"greeting_message"`
+		FallbackMessage       *string `json:"fallback_message"`
+		SessionTimeoutMinutes *int    `json:"session_timeout_minutes"`
+		AIEnabled             *bool   `json:"ai_enabled"`
+		AIProvider            *string `json:"ai_provider"`
+		AIAPIKey              *string `json:"ai_api_key"`
+		AIModel               *string `json:"ai_model"`
+		AIMaxTokens           *int    `json:"ai_max_tokens"`
+		AISystemPrompt        *string `json:"ai_system_prompt"`
+	}
+
+	if err := json.Unmarshal(r.RequestCtx.PostBody(), &req); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	}
+
+	// Get or create settings
+	var settings models.ChatbotSettings
+	result := a.DB.Where("organization_id = ? AND whats_app_account = ?", orgID, "").First(&settings)
+	if result.Error != nil {
+		// Create new settings
+		settings = models.ChatbotSettings{
+			BaseModel:      models.BaseModel{ID: uuid.New()},
+			OrganizationID: orgID,
+		}
+	}
+
+	// Update fields if provided
+	if req.Enabled != nil {
+		settings.IsEnabled = *req.Enabled
+	}
+	if req.GreetingMessage != nil {
+		settings.DefaultResponse = *req.GreetingMessage
+	}
+	if req.FallbackMessage != nil {
+		settings.OutOfHoursMessage = *req.FallbackMessage
+	}
+	if req.SessionTimeoutMinutes != nil {
+		settings.SessionTimeoutMins = *req.SessionTimeoutMinutes
+	}
+	if req.AIEnabled != nil {
+		settings.AIEnabled = *req.AIEnabled
+	}
+	if req.AIProvider != nil {
+		settings.AIProvider = *req.AIProvider
+	}
+	if req.AIAPIKey != nil && *req.AIAPIKey != "" {
+		settings.AIAPIKey = *req.AIAPIKey
+	}
+	if req.AIModel != nil {
+		settings.AIModel = *req.AIModel
+	}
+	if req.AIMaxTokens != nil {
+		settings.AIMaxTokens = *req.AIMaxTokens
+	}
+	if req.AISystemPrompt != nil {
+		settings.AISystemPrompt = *req.AISystemPrompt
+	}
+
+	if err := a.DB.Save(&settings).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to save settings", nil, "")
+	}
+
+	return r.SendEnvelope(map[string]interface{}{
+		"message": "Settings updated successfully",
+	})
+}
+
+// ListKeywordRulesImpl lists all keyword rules for the organization
+func (a *App) ListKeywordRulesImpl(r *fastglue.Request) error {
+	orgID, err := a.getOrgIDFromContext(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	var rules []models.KeywordRule
+	if err := a.DB.Where("organization_id = ?", orgID).
+		Order("priority DESC, created_at DESC").
+		Find(&rules).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to fetch keyword rules", nil, "")
+	}
+
+	response := make([]KeywordRuleResponse, len(rules))
+	for i, rule := range rules {
+		responseContent, _ := json.Marshal(rule.ResponseContent)
+		response[i] = KeywordRuleResponse{
+			ID:              rule.ID.String(),
+			Name:            rule.Name,
+			Keywords:        rule.Keywords,
+			MatchType:       rule.MatchType,
+			ResponseType:    rule.ResponseType,
+			ResponseContent: responseContent,
+			Priority:        rule.Priority,
+			Enabled:         rule.IsEnabled,
+			CreatedAt:       rule.CreatedAt.Format(time.RFC3339),
+		}
+	}
+
+	return r.SendEnvelope(map[string]interface{}{
+		"rules": response,
+	})
+}
+
+// CreateKeywordRuleImpl creates a new keyword rule
+func (a *App) CreateKeywordRuleImpl(r *fastglue.Request) error {
+	orgID, err := a.getOrgIDFromContext(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	var req struct {
+		Name            string                 `json:"name"`
+		Keywords        []string               `json:"keywords"`
+		MatchType       string                 `json:"match_type"`
+		ResponseType    string                 `json:"response_type"`
+		ResponseContent map[string]interface{} `json:"response_content"`
+		Priority        int                    `json:"priority"`
+		Enabled         bool                   `json:"enabled"`
+	}
+
+	if err := json.Unmarshal(r.RequestCtx.PostBody(), &req); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	}
+
+	if len(req.Keywords) == 0 {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "At least one keyword is required", nil, "")
+	}
+
+	// Set defaults
+	if req.MatchType == "" {
+		req.MatchType = "contains"
+	}
+	if req.ResponseType == "" {
+		req.ResponseType = "text"
+	}
+	if req.Name == "" {
+		req.Name = req.Keywords[0]
+	}
+
+	rule := models.KeywordRule{
+		BaseModel:       models.BaseModel{ID: uuid.New()},
+		OrganizationID:  orgID,
+		Name:            req.Name,
+		Keywords:        req.Keywords,
+		MatchType:       req.MatchType,
+		ResponseType:    req.ResponseType,
+		ResponseContent: models.JSONB(req.ResponseContent),
+		Priority:        req.Priority,
+		IsEnabled:       req.Enabled,
+	}
+
+	if err := a.DB.Create(&rule).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create keyword rule", nil, "")
+	}
+
+	return r.SendEnvelope(map[string]interface{}{
+		"id":      rule.ID.String(),
+		"message": "Keyword rule created successfully",
+	})
+}
+
+// GetKeywordRuleImpl gets a single keyword rule
+func (a *App) GetKeywordRuleImpl(r *fastglue.Request) error {
+	orgID, err := a.getOrgIDFromContext(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	idStr := r.RequestCtx.UserValue("id").(string)
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid rule ID", nil, "")
+	}
+
+	var rule models.KeywordRule
+	if err := a.DB.Where("id = ? AND organization_id = ?", id, orgID).First(&rule).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Keyword rule not found", nil, "")
+	}
+
+	responseContent, _ := json.Marshal(rule.ResponseContent)
+	response := KeywordRuleResponse{
+		ID:              rule.ID.String(),
+		Name:            rule.Name,
+		Keywords:        rule.Keywords,
+		MatchType:       rule.MatchType,
+		ResponseType:    rule.ResponseType,
+		ResponseContent: responseContent,
+		Priority:        rule.Priority,
+		Enabled:         rule.IsEnabled,
+		CreatedAt:       rule.CreatedAt.Format(time.RFC3339),
+	}
+
+	return r.SendEnvelope(response)
+}
+
+// UpdateKeywordRuleImpl updates a keyword rule
+func (a *App) UpdateKeywordRuleImpl(r *fastglue.Request) error {
+	orgID, err := a.getOrgIDFromContext(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	idStr := r.RequestCtx.UserValue("id").(string)
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid rule ID", nil, "")
+	}
+
+	var rule models.KeywordRule
+	if err := a.DB.Where("id = ? AND organization_id = ?", id, orgID).First(&rule).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Keyword rule not found", nil, "")
+	}
+
+	var req struct {
+		Name            *string                `json:"name"`
+		Keywords        []string               `json:"keywords"`
+		MatchType       *string                `json:"match_type"`
+		ResponseType    *string                `json:"response_type"`
+		ResponseContent map[string]interface{} `json:"response_content"`
+		Priority        *int                   `json:"priority"`
+		Enabled         *bool                  `json:"enabled"`
+	}
+
+	if err := json.Unmarshal(r.RequestCtx.PostBody(), &req); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	}
+
+	// Update fields if provided
+	if req.Name != nil {
+		rule.Name = *req.Name
+	}
+	if len(req.Keywords) > 0 {
+		rule.Keywords = req.Keywords
+	}
+	if req.MatchType != nil {
+		rule.MatchType = *req.MatchType
+	}
+	if req.ResponseType != nil {
+		rule.ResponseType = *req.ResponseType
+	}
+	if req.ResponseContent != nil {
+		rule.ResponseContent = models.JSONB(req.ResponseContent)
+	}
+	if req.Priority != nil {
+		rule.Priority = *req.Priority
+	}
+	if req.Enabled != nil {
+		rule.IsEnabled = *req.Enabled
+	}
+
+	if err := a.DB.Save(&rule).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to update keyword rule", nil, "")
+	}
+
+	return r.SendEnvelope(map[string]interface{}{
+		"message": "Keyword rule updated successfully",
+	})
+}
+
+// DeleteKeywordRuleImpl deletes a keyword rule
+func (a *App) DeleteKeywordRuleImpl(r *fastglue.Request) error {
+	orgID, err := a.getOrgIDFromContext(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	idStr := r.RequestCtx.UserValue("id").(string)
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid rule ID", nil, "")
+	}
+
+	result := a.DB.Where("id = ? AND organization_id = ?", id, orgID).Delete(&models.KeywordRule{})
+	if result.Error != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to delete keyword rule", nil, "")
+	}
+	if result.RowsAffected == 0 {
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Keyword rule not found", nil, "")
+	}
+
+	return r.SendEnvelope(map[string]interface{}{
+		"message": "Keyword rule deleted successfully",
+	})
+}
+
+// ListChatbotFlowsImpl lists all chatbot flows
+func (a *App) ListChatbotFlowsImpl(r *fastglue.Request) error {
+	orgID, err := a.getOrgIDFromContext(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	var flows []models.ChatbotFlow
+	if err := a.DB.Where("organization_id = ?", orgID).
+		Preload("Steps").
+		Order("created_at DESC").
+		Find(&flows).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to fetch flows", nil, "")
+	}
+
+	response := make([]ChatbotFlowResponse, len(flows))
+	for i, flow := range flows {
+		response[i] = ChatbotFlowResponse{
+			ID:              flow.ID.String(),
+			Name:            flow.Name,
+			Description:     flow.Description,
+			TriggerKeywords: flow.TriggerKeywords,
+			Enabled:         flow.IsEnabled,
+			StepsCount:      len(flow.Steps),
+			CreatedAt:       flow.CreatedAt.Format(time.RFC3339),
+		}
+	}
+
+	return r.SendEnvelope(map[string]interface{}{
+		"flows": response,
+	})
+}
+
+// FlowStepRequest represents a step in a flow creation/update request
+type FlowStepRequest struct {
+	StepName        string                   `json:"step_name"`
+	StepOrder       int                      `json:"step_order"`
+	Message         string                   `json:"message"`
+	MessageType     string                   `json:"message_type"`
+	InputType       string                   `json:"input_type"`
+	InputConfig     map[string]interface{}   `json:"input_config"`
+	ApiConfig       map[string]interface{}   `json:"api_config"`
+	Buttons         []map[string]interface{} `json:"buttons"`
+	ValidationRegex string                   `json:"validation_regex"`
+	ValidationError string                   `json:"validation_error"`
+	StoreAs         string                   `json:"store_as"`
+	NextStep        string                   `json:"next_step"`
+	RetryOnInvalid  bool                     `json:"retry_on_invalid"`
+	MaxRetries      int                      `json:"max_retries"`
+}
+
+// CreateChatbotFlowImpl creates a new chatbot flow
+func (a *App) CreateChatbotFlowImpl(r *fastglue.Request) error {
+	orgID, err := a.getOrgIDFromContext(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	var req struct {
+		Name              string            `json:"name"`
+		Description       string            `json:"description"`
+		TriggerKeywords    []string               `json:"trigger_keywords"`
+		InitialMessage     string                 `json:"initial_message"`
+		CompletionMessage  string                 `json:"completion_message"`
+		OnCompleteAction   string                 `json:"on_complete_action"`
+		CompletionConfig   map[string]interface{} `json:"completion_config"`
+		Enabled            bool                   `json:"enabled"`
+		Steps              []FlowStepRequest      `json:"steps"`
+	}
+
+	if err := json.Unmarshal(r.RequestCtx.PostBody(), &req); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	}
+
+	if req.Name == "" {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Name is required", nil, "")
+	}
+
+	// Use transaction for flow + steps
+	tx := a.DB.Begin()
+
+	flowID := uuid.New()
+	flow := models.ChatbotFlow{
+		BaseModel:         models.BaseModel{ID: flowID},
+		OrganizationID:    orgID,
+		Name:              req.Name,
+		Description:       req.Description,
+		TriggerKeywords:   req.TriggerKeywords,
+		InitialMessage:    req.InitialMessage,
+		CompletionMessage: req.CompletionMessage,
+		OnCompleteAction:  req.OnCompleteAction,
+		CompletionConfig:  models.JSONB(req.CompletionConfig),
+		IsEnabled:         req.Enabled,
+	}
+
+	if err := tx.Create(&flow).Error; err != nil {
+		tx.Rollback()
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create flow", nil, "")
+	}
+
+	// Create steps
+	for i, stepReq := range req.Steps {
+		// Convert buttons to JSONBArray
+		var buttons models.JSONBArray
+		for _, btn := range stepReq.Buttons {
+			buttons = append(buttons, btn)
+		}
+
+		step := models.ChatbotFlowStep{
+			BaseModel:       models.BaseModel{ID: uuid.New()},
+			FlowID:          flowID,
+			StepName:        stepReq.StepName,
+			StepOrder:       i + 1,
+			Message:         stepReq.Message,
+			MessageType:     stepReq.MessageType,
+			InputType:       stepReq.InputType,
+			InputConfig:     models.JSONB(stepReq.InputConfig),
+			ApiConfig:       models.JSONB(stepReq.ApiConfig),
+			Buttons:         buttons,
+			ValidationRegex: stepReq.ValidationRegex,
+			ValidationError: stepReq.ValidationError,
+			StoreAs:         stepReq.StoreAs,
+			NextStep:        stepReq.NextStep,
+			RetryOnInvalid:  stepReq.RetryOnInvalid,
+			MaxRetries:      stepReq.MaxRetries,
+		}
+		if step.MessageType == "" {
+			step.MessageType = "text"
+		}
+		if step.MaxRetries == 0 {
+			step.MaxRetries = 3
+		}
+		if err := tx.Create(&step).Error; err != nil {
+			tx.Rollback()
+			return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create flow step", nil, "")
+		}
+	}
+
+	tx.Commit()
+
+	return r.SendEnvelope(map[string]interface{}{
+		"id":      flow.ID.String(),
+		"message": "Flow created successfully",
+	})
+}
+
+// GetChatbotFlowImpl gets a single chatbot flow with steps
+func (a *App) GetChatbotFlowImpl(r *fastglue.Request) error {
+	orgID, err := a.getOrgIDFromContext(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	idStr := r.RequestCtx.UserValue("id").(string)
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid flow ID", nil, "")
+	}
+
+	var flow models.ChatbotFlow
+	if err := a.DB.Where("id = ? AND organization_id = ?", id, orgID).
+		Preload("Steps", func(db *gorm.DB) *gorm.DB {
+			return db.Order("step_order ASC")
+		}).
+		First(&flow).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Flow not found", nil, "")
+	}
+
+	return r.SendEnvelope(flow)
+}
+
+// UpdateChatbotFlowImpl updates a chatbot flow
+func (a *App) UpdateChatbotFlowImpl(r *fastglue.Request) error {
+	orgID, err := a.getOrgIDFromContext(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	idStr := r.RequestCtx.UserValue("id").(string)
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid flow ID", nil, "")
+	}
+
+	var flow models.ChatbotFlow
+	if err := a.DB.Where("id = ? AND organization_id = ?", id, orgID).First(&flow).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Flow not found", nil, "")
+	}
+
+	var req struct {
+		Name              *string                `json:"name"`
+		Description       *string                `json:"description"`
+		TriggerKeywords   []string               `json:"trigger_keywords"`
+		InitialMessage    *string                `json:"initial_message"`
+		CompletionMessage *string                `json:"completion_message"`
+		OnCompleteAction  *string                `json:"on_complete_action"`
+		CompletionConfig  map[string]interface{} `json:"completion_config"`
+		Enabled           *bool                  `json:"enabled"`
+		Steps             []FlowStepRequest      `json:"steps"`
+	}
+
+	if err := json.Unmarshal(r.RequestCtx.PostBody(), &req); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	}
+
+	tx := a.DB.Begin()
+
+	if req.Name != nil {
+		flow.Name = *req.Name
+	}
+	if req.Description != nil {
+		flow.Description = *req.Description
+	}
+	if len(req.TriggerKeywords) > 0 {
+		flow.TriggerKeywords = req.TriggerKeywords
+	}
+	if req.InitialMessage != nil {
+		flow.InitialMessage = *req.InitialMessage
+	}
+	if req.CompletionMessage != nil {
+		flow.CompletionMessage = *req.CompletionMessage
+	}
+	if req.OnCompleteAction != nil {
+		flow.OnCompleteAction = *req.OnCompleteAction
+	}
+	if req.CompletionConfig != nil {
+		flow.CompletionConfig = models.JSONB(req.CompletionConfig)
+	}
+	if req.Enabled != nil {
+		flow.IsEnabled = *req.Enabled
+	}
+
+	if err := tx.Save(&flow).Error; err != nil {
+		tx.Rollback()
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to update flow", nil, "")
+	}
+
+	// Update steps if provided
+	if len(req.Steps) > 0 {
+		// Delete existing steps
+		if err := tx.Where("flow_id = ?", id).Delete(&models.ChatbotFlowStep{}).Error; err != nil {
+			tx.Rollback()
+			return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to update flow steps", nil, "")
+		}
+
+		// Create new steps
+		for i, stepReq := range req.Steps {
+			// Convert buttons to JSONBArray
+			var buttons models.JSONBArray
+			for _, btn := range stepReq.Buttons {
+				buttons = append(buttons, btn)
+			}
+
+			step := models.ChatbotFlowStep{
+				BaseModel:       models.BaseModel{ID: uuid.New()},
+				FlowID:          id,
+				StepName:        stepReq.StepName,
+				StepOrder:       i + 1,
+				Message:         stepReq.Message,
+				MessageType:     stepReq.MessageType,
+				InputType:       stepReq.InputType,
+				InputConfig:     models.JSONB(stepReq.InputConfig),
+				ApiConfig:       models.JSONB(stepReq.ApiConfig),
+				Buttons:         buttons,
+				ValidationRegex: stepReq.ValidationRegex,
+				ValidationError: stepReq.ValidationError,
+				StoreAs:         stepReq.StoreAs,
+				NextStep:        stepReq.NextStep,
+				RetryOnInvalid:  stepReq.RetryOnInvalid,
+				MaxRetries:      stepReq.MaxRetries,
+			}
+			if step.MessageType == "" {
+				step.MessageType = "text"
+			}
+			if step.MaxRetries == 0 {
+				step.MaxRetries = 3
+			}
+			if err := tx.Create(&step).Error; err != nil {
+				tx.Rollback()
+				return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create flow step", nil, "")
+			}
+		}
+	}
+
+	tx.Commit()
+
+	return r.SendEnvelope(map[string]interface{}{
+		"message": "Flow updated successfully",
+	})
+}
+
+// DeleteChatbotFlowImpl deletes a chatbot flow
+func (a *App) DeleteChatbotFlowImpl(r *fastglue.Request) error {
+	orgID, err := a.getOrgIDFromContext(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	idStr := r.RequestCtx.UserValue("id").(string)
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid flow ID", nil, "")
+	}
+
+	// Delete flow and steps in transaction
+	tx := a.DB.Begin()
+
+	// Delete steps first
+	if err := tx.Where("flow_id = ?", id).Delete(&models.ChatbotFlowStep{}).Error; err != nil {
+		tx.Rollback()
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to delete flow steps", nil, "")
+	}
+
+	// Delete flow
+	result := tx.Where("id = ? AND organization_id = ?", id, orgID).Delete(&models.ChatbotFlow{})
+	if result.Error != nil {
+		tx.Rollback()
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to delete flow", nil, "")
+	}
+	if result.RowsAffected == 0 {
+		tx.Rollback()
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Flow not found", nil, "")
+	}
+
+	tx.Commit()
+	return r.SendEnvelope(map[string]interface{}{
+		"message": "Flow deleted successfully",
+	})
+}
+
+// ListAIContextsImpl lists all AI contexts
+func (a *App) ListAIContextsImpl(r *fastglue.Request) error {
+	orgID, err := a.getOrgIDFromContext(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	var contexts []models.AIContext
+	if err := a.DB.Where("organization_id = ?", orgID).
+		Order("priority DESC, created_at DESC").
+		Find(&contexts).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to fetch AI contexts", nil, "")
+	}
+
+	response := make([]AIContextResponse, len(contexts))
+	for i, ctx := range contexts {
+		response[i] = AIContextResponse{
+			ID:              ctx.ID.String(),
+			Name:            ctx.Name,
+			ContextType:     ctx.ContextType,
+			TriggerKeywords: ctx.TriggerKeywords,
+			StaticContent:   ctx.StaticContent,
+			Enabled:         ctx.IsEnabled,
+			Priority:        ctx.Priority,
+			CreatedAt:       ctx.CreatedAt.Format(time.RFC3339),
+		}
+	}
+
+	return r.SendEnvelope(map[string]interface{}{
+		"contexts": response,
+	})
+}
+
+// CreateAIContextImpl creates a new AI context
+func (a *App) CreateAIContextImpl(r *fastglue.Request) error {
+	orgID, err := a.getOrgIDFromContext(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	var req struct {
+		Name            string   `json:"name"`
+		ContextType     string   `json:"context_type"`
+		TriggerKeywords []string `json:"trigger_keywords"`
+		StaticContent   string   `json:"static_content"`
+		Priority        int      `json:"priority"`
+		Enabled         bool     `json:"enabled"`
+	}
+
+	if err := json.Unmarshal(r.RequestCtx.PostBody(), &req); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	}
+
+	if req.Name == "" {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Name is required", nil, "")
+	}
+	if req.ContextType == "" {
+		req.ContextType = "static"
+	}
+
+	ctx := models.AIContext{
+		BaseModel:       models.BaseModel{ID: uuid.New()},
+		OrganizationID:  orgID,
+		Name:            req.Name,
+		ContextType:     req.ContextType,
+		TriggerKeywords: req.TriggerKeywords,
+		StaticContent:   req.StaticContent,
+		Priority:        req.Priority,
+		IsEnabled:       req.Enabled,
+	}
+
+	if err := a.DB.Create(&ctx).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create AI context", nil, "")
+	}
+
+	return r.SendEnvelope(map[string]interface{}{
+		"id":      ctx.ID.String(),
+		"message": "AI context created successfully",
+	})
+}
+
+// GetAIContextImpl gets a single AI context
+func (a *App) GetAIContextImpl(r *fastglue.Request) error {
+	orgID, err := a.getOrgIDFromContext(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	idStr := r.RequestCtx.UserValue("id").(string)
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid context ID", nil, "")
+	}
+
+	var ctx models.AIContext
+	if err := a.DB.Where("id = ? AND organization_id = ?", id, orgID).First(&ctx).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "AI context not found", nil, "")
+	}
+
+	return r.SendEnvelope(ctx)
+}
+
+// UpdateAIContextImpl updates an AI context
+func (a *App) UpdateAIContextImpl(r *fastglue.Request) error {
+	orgID, err := a.getOrgIDFromContext(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	idStr := r.RequestCtx.UserValue("id").(string)
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid context ID", nil, "")
+	}
+
+	var ctx models.AIContext
+	if err := a.DB.Where("id = ? AND organization_id = ?", id, orgID).First(&ctx).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "AI context not found", nil, "")
+	}
+
+	var req struct {
+		Name            *string  `json:"name"`
+		ContextType     *string  `json:"context_type"`
+		TriggerKeywords []string `json:"trigger_keywords"`
+		StaticContent   *string  `json:"static_content"`
+		Priority        *int     `json:"priority"`
+		Enabled         *bool    `json:"enabled"`
+	}
+
+	if err := json.Unmarshal(r.RequestCtx.PostBody(), &req); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	}
+
+	if req.Name != nil {
+		ctx.Name = *req.Name
+	}
+	if req.ContextType != nil {
+		ctx.ContextType = *req.ContextType
+	}
+	if len(req.TriggerKeywords) > 0 {
+		ctx.TriggerKeywords = req.TriggerKeywords
+	}
+	if req.StaticContent != nil {
+		ctx.StaticContent = *req.StaticContent
+	}
+	if req.Priority != nil {
+		ctx.Priority = *req.Priority
+	}
+	if req.Enabled != nil {
+		ctx.IsEnabled = *req.Enabled
+	}
+
+	if err := a.DB.Save(&ctx).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to update AI context", nil, "")
+	}
+
+	return r.SendEnvelope(map[string]interface{}{
+		"message": "AI context updated successfully",
+	})
+}
+
+// DeleteAIContextImpl deletes an AI context
+func (a *App) DeleteAIContextImpl(r *fastglue.Request) error {
+	orgID, err := a.getOrgIDFromContext(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	idStr := r.RequestCtx.UserValue("id").(string)
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid context ID", nil, "")
+	}
+
+	result := a.DB.Where("id = ? AND organization_id = ?", id, orgID).Delete(&models.AIContext{})
+	if result.Error != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to delete AI context", nil, "")
+	}
+	if result.RowsAffected == 0 {
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "AI context not found", nil, "")
+	}
+
+	return r.SendEnvelope(map[string]interface{}{
+		"message": "AI context deleted successfully",
+	})
+}
+
+// ListChatbotSessionsImpl lists chatbot sessions
+func (a *App) ListChatbotSessionsImpl(r *fastglue.Request) error {
+	orgID, err := a.getOrgIDFromContext(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	status := string(r.RequestCtx.QueryArgs().Peek("status"))
+
+	query := a.DB.Where("organization_id = ?", orgID).
+		Preload("Contact").
+		Order("last_activity_at DESC")
+
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+
+	var sessions []models.ChatbotSession
+	if err := query.Limit(100).Find(&sessions).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to fetch sessions", nil, "")
+	}
+
+	return r.SendEnvelope(map[string]interface{}{
+		"sessions": sessions,
+	})
+}
+
+// GetChatbotSessionImpl gets a single chatbot session with messages
+func (a *App) GetChatbotSessionImpl(r *fastglue.Request) error {
+	orgID, err := a.getOrgIDFromContext(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	idStr := r.RequestCtx.UserValue("id").(string)
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid session ID", nil, "")
+	}
+
+	var session models.ChatbotSession
+	if err := a.DB.Where("id = ? AND organization_id = ?", id, orgID).
+		Preload("Contact").
+		Preload("Messages").
+		First(&session).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Session not found", nil, "")
+	}
+
+	return r.SendEnvelope(session)
+}
+
+// getChatbotStats returns chatbot statistics for an organization
+func (a *App) getChatbotStats(orgID uuid.UUID) ChatbotStatsResponse {
+	var stats ChatbotStatsResponse
+
+	// Total sessions
+	a.DB.Model(&models.ChatbotSession{}).
+		Where("organization_id = ?", orgID).
+		Count(&stats.TotalSessions)
+
+	// Active sessions
+	a.DB.Model(&models.ChatbotSession{}).
+		Where("organization_id = ? AND status = ?", orgID, "active").
+		Count(&stats.ActiveSessions)
+
+	// Messages handled (from chatbot_session_messages)
+	a.DB.Model(&models.ChatbotSessionMessage{}).
+		Joins("JOIN chatbot_sessions ON chatbot_sessions.id = chatbot_session_messages.session_id").
+		Where("chatbot_sessions.organization_id = ?", orgID).
+		Count(&stats.MessagesHandled)
+
+	// Agent transfers
+	a.DB.Model(&models.AgentTransfer{}).
+		Where("organization_id = ?", orgID).
+		Count(&stats.AgentTransfers)
+
+	// Keywords count
+	a.DB.Model(&models.KeywordRule{}).
+		Where("organization_id = ?", orgID).
+		Count(&stats.KeywordsCount)
+
+	// Flows count
+	a.DB.Model(&models.ChatbotFlow{}).
+		Where("organization_id = ?", orgID).
+		Count(&stats.FlowsCount)
+
+	// AI contexts count
+	a.DB.Model(&models.AIContext{}).
+		Where("organization_id = ?", orgID).
+		Count(&stats.AIContextsCount)
+
+	return stats
+}

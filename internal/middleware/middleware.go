@@ -1,0 +1,213 @@
+package middleware
+
+import (
+	"strings"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
+	"github.com/valyala/fasthttp"
+	"github.com/whatomate/whatomate/internal/models"
+	"github.com/zerodha/fastglue"
+	"github.com/zerodha/logf"
+	"gorm.io/gorm"
+)
+
+// Context keys
+const (
+	ContextKeyUserID         = "user_id"
+	ContextKeyOrganizationID = "organization_id"
+	ContextKeyEmail          = "email"
+	ContextKeyRole           = "role"
+	ContextKeyUser           = "user"
+	ContextKeyOrganization   = "organization"
+)
+
+// JWTClaims represents JWT claims
+type JWTClaims struct {
+	UserID         uuid.UUID `json:"user_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Email          string    `json:"email"`
+	Role           string    `json:"role"`
+	jwt.RegisteredClaims
+}
+
+// RequestLogger logs incoming requests
+func RequestLogger(log logf.Logger) fastglue.FastMiddleware {
+	return func(r *fastglue.Request) *fastglue.Request {
+		start := time.Now()
+
+		// Store start time for later use
+		r.RequestCtx.SetUserValue("request_start", start)
+
+		return r
+	}
+}
+
+// CORS handles Cross-Origin Resource Sharing
+func CORS() fastglue.FastMiddleware {
+	return func(r *fastglue.Request) *fastglue.Request {
+		origin := string(r.RequestCtx.Request.Header.Peek("Origin"))
+		if origin == "" {
+			origin = "*"
+		}
+
+		r.RequestCtx.Response.Header.Set("Access-Control-Allow-Origin", origin)
+		r.RequestCtx.Response.Header.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
+		r.RequestCtx.Response.Header.Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+		r.RequestCtx.Response.Header.Set("Access-Control-Allow-Credentials", "true")
+		r.RequestCtx.Response.Header.Set("Access-Control-Max-Age", "86400")
+
+		// Handle preflight
+		if string(r.RequestCtx.Method()) == "OPTIONS" {
+			r.RequestCtx.SetStatusCode(fasthttp.StatusNoContent)
+			return nil
+		}
+
+		return r
+	}
+}
+
+// Recovery recovers from panics
+func Recovery(log logf.Logger) fastglue.FastMiddleware {
+	return func(r *fastglue.Request) *fastglue.Request {
+		defer func() {
+			if err := recover(); err != nil {
+				log.Error("Panic recovered", "error", err, "path", string(r.RequestCtx.Path()))
+				r.RequestCtx.SetStatusCode(fasthttp.StatusInternalServerError)
+				r.RequestCtx.SetBodyString(`{"status":"error","message":"Internal server error"}`)
+			}
+		}()
+		return r
+	}
+}
+
+// Auth validates JWT tokens
+func Auth(secret string) fastglue.FastMiddleware {
+	return func(r *fastglue.Request) *fastglue.Request {
+		authHeader := string(r.RequestCtx.Request.Header.Peek("Authorization"))
+		if authHeader == "" {
+			r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Missing authorization header", nil, "")
+			return nil
+		}
+
+		// Extract token from "Bearer <token>"
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Invalid authorization header format", nil, "")
+			return nil
+		}
+
+		tokenString := parts[1]
+
+		// Parse and validate token
+		token, err := jwt.ParseWithClaims(tokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
+			return []byte(secret), nil
+		})
+
+		if err != nil || !token.Valid {
+			r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Invalid or expired token", nil, "")
+			return nil
+		}
+
+		claims, ok := token.Claims.(*JWTClaims)
+		if !ok {
+			r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Invalid token claims", nil, "")
+			return nil
+		}
+
+		// Store claims in context
+		r.RequestCtx.SetUserValue(ContextKeyUserID, claims.UserID)
+		r.RequestCtx.SetUserValue(ContextKeyOrganizationID, claims.OrganizationID)
+		r.RequestCtx.SetUserValue(ContextKeyEmail, claims.Email)
+		r.RequestCtx.SetUserValue(ContextKeyRole, claims.Role)
+
+		return r
+	}
+}
+
+// OrganizationContext loads organization and user from database
+func OrganizationContext(db *gorm.DB) fastglue.FastMiddleware {
+	return func(r *fastglue.Request) *fastglue.Request {
+		userID, ok := r.RequestCtx.UserValue(ContextKeyUserID).(uuid.UUID)
+		if !ok {
+			r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "User ID not found in context", nil, "")
+			return nil
+		}
+
+		orgID, ok := r.RequestCtx.UserValue(ContextKeyOrganizationID).(uuid.UUID)
+		if !ok {
+			r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Organization ID not found in context", nil, "")
+			return nil
+		}
+
+		// Load user
+		var user models.User
+		if err := db.Where("id = ?", userID).First(&user).Error; err != nil {
+			r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "User not found", nil, "")
+			return nil
+		}
+
+		if !user.IsActive {
+			r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Account is disabled", nil, "")
+			return nil
+		}
+
+		// Load organization
+		var org models.Organization
+		if err := db.Where("id = ?", orgID).First(&org).Error; err != nil {
+			r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Organization not found", nil, "")
+			return nil
+		}
+
+		// Store in context
+		r.RequestCtx.SetUserValue(ContextKeyUser, &user)
+		r.RequestCtx.SetUserValue(ContextKeyOrganization, &org)
+
+		return r
+	}
+}
+
+// RequireRole checks if user has required role
+func RequireRole(roles ...string) fastglue.FastMiddleware {
+	return func(r *fastglue.Request) *fastglue.Request {
+		role, ok := r.RequestCtx.UserValue(ContextKeyRole).(string)
+		if !ok {
+			r.SendErrorEnvelope(fasthttp.StatusForbidden, "Role not found", nil, "")
+			return nil
+		}
+
+		for _, allowedRole := range roles {
+			if role == allowedRole {
+				return r
+			}
+		}
+
+		r.SendErrorEnvelope(fasthttp.StatusForbidden, "Insufficient permissions", nil, "")
+		return nil
+	}
+}
+
+// GetUserID extracts user ID from request context
+func GetUserID(r *fastglue.Request) (uuid.UUID, bool) {
+	userID, ok := r.RequestCtx.UserValue(ContextKeyUserID).(uuid.UUID)
+	return userID, ok
+}
+
+// GetOrganizationID extracts organization ID from request context
+func GetOrganizationID(r *fastglue.Request) (uuid.UUID, bool) {
+	orgID, ok := r.RequestCtx.UserValue(ContextKeyOrganizationID).(uuid.UUID)
+	return orgID, ok
+}
+
+// GetUser extracts user from request context
+func GetUser(r *fastglue.Request) (*models.User, bool) {
+	user, ok := r.RequestCtx.UserValue(ContextKeyUser).(*models.User)
+	return user, ok
+}
+
+// GetOrganization extracts organization from request context
+func GetOrganization(r *fastglue.Request) (*models.Organization, bool) {
+	org, ok := r.RequestCtx.UserValue(ContextKeyOrganization).(*models.Organization)
+	return org, ok
+}

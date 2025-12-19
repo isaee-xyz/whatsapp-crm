@@ -1,0 +1,212 @@
+package models
+
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// ChatbotSettings holds chatbot configuration per WhatsApp account
+// WhatsAppAccount can be empty for organization-level default settings
+type ChatbotSettings struct {
+	BaseModel
+	OrganizationID  uuid.UUID `gorm:"type:uuid;index;not null" json:"organization_id"`
+	WhatsAppAccount string    `gorm:"size:100;index" json:"whatsapp_account"` // References WhatsAppAccount.Name (empty for org-level defaults)
+	IsEnabled       bool      `gorm:"default:false" json:"is_enabled"`
+	DefaultResponse      string      `gorm:"type:text" json:"default_response"`
+	BusinessHoursEnabled bool        `gorm:"default:false" json:"business_hours_enabled"`
+	BusinessHours        JSONBArray  `gorm:"type:jsonb;default:'[]'" json:"business_hours"` // [{day, enabled, start_time, end_time}]
+	OutOfHoursMessage    string      `gorm:"type:text" json:"out_of_hours_message"`
+	AIEnabled            bool        `gorm:"column:ai_enabled;default:false" json:"ai_enabled"`
+	AIProvider           string      `gorm:"column:ai_provider;size:20" json:"ai_provider"` // openai, anthropic, google
+	AIAPIKey             string      `gorm:"column:ai_api_key;type:text" json:"-"`         // encrypted
+	AIModel              string      `gorm:"column:ai_model;size:100" json:"ai_model"`
+	AIMaxTokens          int         `gorm:"column:ai_max_tokens;default:500" json:"ai_max_tokens"`
+	AITemperature        float64     `gorm:"column:ai_temperature;type:decimal(3,2);default:0.7" json:"ai_temperature"`
+	AISystemPrompt       string      `gorm:"column:ai_system_prompt;type:text" json:"ai_system_prompt"`
+	AIIncludeHistory     bool        `gorm:"column:ai_include_history;default:true" json:"ai_include_history"`
+	AIHistoryLimit       int         `gorm:"column:ai_history_limit;default:4" json:"ai_history_limit"`
+	SessionTimeoutMins   int         `gorm:"default:30" json:"session_timeout_minutes"`
+	ExcludedNumbers      JSONBArray  `gorm:"type:jsonb;default:'[]'" json:"excluded_numbers"`
+
+	// Relations
+	Organization *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
+}
+
+func (ChatbotSettings) TableName() string {
+	return "chatbot_settings"
+}
+
+// KeywordRule defines automatic response rules based on keywords
+type KeywordRule struct {
+	BaseModel
+	OrganizationID  uuid.UUID   `gorm:"type:uuid;index;not null" json:"organization_id"`
+	WhatsAppAccount string      `gorm:"size:100;index;not null" json:"whatsapp_account"` // References WhatsAppAccount.Name
+	Name            string      `gorm:"size:255;not null" json:"name"`
+	IsEnabled       bool        `gorm:"default:true" json:"is_enabled"`
+	Priority        int         `gorm:"default:10" json:"priority"`
+	Keywords        StringArray `gorm:"type:jsonb;not null" json:"keywords"`
+	MatchType       string      `gorm:"size:20;default:'contains'" json:"match_type"` // exact, contains, starts_with, regex
+	CaseSensitive   bool        `gorm:"default:false" json:"case_sensitive"`
+	ResponseType    string      `gorm:"size:20;not null" json:"response_type"` // text, template, media, flow, script
+	ResponseContent JSONB       `gorm:"type:jsonb;not null" json:"response_content"`
+	Conditions      string      `gorm:"type:text" json:"conditions"`
+	ActiveFrom      *time.Time  `json:"active_from,omitempty"`
+	ActiveUntil     *time.Time  `json:"active_until,omitempty"`
+
+	// Relations
+	Organization *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
+}
+
+func (KeywordRule) TableName() string {
+	return "keyword_rules"
+}
+
+// ChatbotFlow defines multi-step conversation flows
+type ChatbotFlow struct {
+	BaseModel
+	OrganizationID     uuid.UUID   `gorm:"type:uuid;index;not null" json:"organization_id"`
+	WhatsAppAccount    string      `gorm:"size:100;index;not null" json:"whatsapp_account"` // References WhatsAppAccount.Name
+	Name               string      `gorm:"size:255;not null" json:"name"`
+	IsEnabled          bool        `gorm:"default:true" json:"is_enabled"`
+	Description        string      `gorm:"type:text" json:"description"`
+	TriggerKeywords    StringArray `gorm:"type:jsonb" json:"trigger_keywords"`
+	TriggerButtonID    string      `gorm:"size:100" json:"trigger_button_id"`
+	InitialMessage     string      `gorm:"type:text" json:"initial_message"`
+	InitialMessageType string      `gorm:"size:20;default:'text'" json:"initial_message_type"`
+	InitialTemplateID  *uuid.UUID  `gorm:"type:uuid" json:"initial_template_id,omitempty"`
+	CompletionMessage  string      `gorm:"type:text" json:"completion_message"`
+	OnCompleteAction   string      `gorm:"size:20" json:"on_complete_action"` // none, webhook, create_record
+	CompletionConfig   JSONB       `gorm:"type:jsonb" json:"completion_config"`
+	TimeoutMessage     string      `gorm:"type:text" json:"timeout_message"`
+	CancelKeywords     StringArray `gorm:"type:jsonb" json:"cancel_keywords"`
+
+	// Relations
+	Organization    *Organization     `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
+	InitialTemplate *Template         `gorm:"foreignKey:InitialTemplateID" json:"initial_template,omitempty"`
+	Steps           []ChatbotFlowStep `gorm:"foreignKey:FlowID" json:"steps,omitempty"`
+}
+
+func (ChatbotFlow) TableName() string {
+	return "chatbot_flows"
+}
+
+// ChatbotFlowStep defines individual steps in a conversation flow
+type ChatbotFlowStep struct {
+	BaseModel
+	FlowID          uuid.UUID  `gorm:"type:uuid;index;not null" json:"flow_id"`
+	StepName        string     `gorm:"size:100;not null" json:"step_name"`
+	StepOrder       int        `gorm:"not null" json:"step_order"`
+	Message         string     `gorm:"type:text;not null" json:"message"`
+	MessageType     string     `gorm:"size:20;default:'text'" json:"message_type"` // text, template, script, api_fetch, buttons
+	TemplateID      *uuid.UUID `gorm:"type:uuid" json:"template_id,omitempty"`
+	ApiConfig       JSONB      `gorm:"type:jsonb" json:"api_config"`     // {url, method, headers, body, response_path, fallback_message}
+	Buttons         JSONBArray `gorm:"type:jsonb" json:"buttons"`        // [{id, title}] - max 10 options (3=buttons, 4-10=list)
+	InputType       string     `gorm:"size:20" json:"input_type"` // none, text, number, email, phone, date, select, button, whatsapp_flow
+	InputConfig     JSONB      `gorm:"type:jsonb" json:"input_config"`
+	ValidationRegex string     `gorm:"size:255" json:"validation_regex"`
+	ValidationError string     `gorm:"type:text" json:"validation_error"`
+	StoreAs         string     `gorm:"size:100" json:"store_as"`
+	NextStep        string     `gorm:"size:100" json:"next_step"`
+	ConditionalNext JSONB      `gorm:"type:jsonb" json:"conditional_next"` // {"option1": "step_a", "default": "step_b"}
+	SkipCondition   string     `gorm:"type:text" json:"skip_condition"`
+	RetryOnInvalid  bool       `gorm:"default:true" json:"retry_on_invalid"`
+	MaxRetries      int        `gorm:"default:3" json:"max_retries"`
+
+	// Relations
+	Flow     *ChatbotFlow `gorm:"foreignKey:FlowID" json:"flow,omitempty"`
+	Template *Template    `gorm:"foreignKey:TemplateID" json:"template,omitempty"`
+}
+
+func (ChatbotFlowStep) TableName() string {
+	return "chatbot_flow_steps"
+}
+
+// ChatbotSession tracks active conversation sessions
+type ChatbotSession struct {
+	BaseModel
+	OrganizationID  uuid.UUID  `gorm:"type:uuid;index;not null" json:"organization_id"`
+	ContactID       uuid.UUID  `gorm:"type:uuid;index;not null" json:"contact_id"`
+	WhatsAppAccount string     `gorm:"size:100;index;not null" json:"whatsapp_account"` // References WhatsAppAccount.Name
+	PhoneNumber     string     `gorm:"size:20;not null" json:"phone_number"`
+	Status          string     `gorm:"size:20;default:'active'" json:"status"` // active, completed, cancelled, timeout
+	CurrentFlowID   *uuid.UUID `gorm:"type:uuid" json:"current_flow_id,omitempty"`
+	CurrentStep     string     `gorm:"size:100" json:"current_step"`
+	StepRetries     int        `gorm:"default:0" json:"step_retries"`
+	SessionData     JSONB      `gorm:"type:jsonb;default:'{}'" json:"session_data"`
+	StartedAt       time.Time  `gorm:"autoCreateTime" json:"started_at"`
+	LastActivityAt  time.Time  `json:"last_activity_at"`
+	CompletedAt     *time.Time `json:"completed_at,omitempty"`
+
+	// Relations
+	Organization *Organization           `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
+	Contact      *Contact                `gorm:"foreignKey:ContactID" json:"contact,omitempty"`
+	CurrentFlow  *ChatbotFlow            `gorm:"foreignKey:CurrentFlowID" json:"current_flow,omitempty"`
+	Messages     []ChatbotSessionMessage `gorm:"foreignKey:SessionID" json:"messages,omitempty"`
+}
+
+func (ChatbotSession) TableName() string {
+	return "chatbot_sessions"
+}
+
+// ChatbotSessionMessage stores message history within a session
+type ChatbotSessionMessage struct {
+	BaseModel
+	SessionID uuid.UUID `gorm:"type:uuid;index;not null" json:"session_id"`
+	Direction string    `gorm:"size:10;not null" json:"direction"` // incoming, outgoing
+	Message   string    `gorm:"type:text" json:"message"`
+	StepName  string    `gorm:"size:100" json:"step_name"`
+
+	// Relations
+	Session *ChatbotSession `gorm:"foreignKey:SessionID" json:"session,omitempty"`
+}
+
+func (ChatbotSessionMessage) TableName() string {
+	return "chatbot_session_messages"
+}
+
+// AIContext provides context data for AI responses
+type AIContext struct {
+	BaseModel
+	OrganizationID  uuid.UUID   `gorm:"type:uuid;index;not null" json:"organization_id"`
+	WhatsAppAccount string      `gorm:"size:100;index" json:"whatsapp_account"` // References WhatsAppAccount.Name (empty for org-level)
+	Name            string      `gorm:"size:255;not null" json:"name"`
+	IsEnabled       bool        `gorm:"default:true" json:"is_enabled"`
+	Priority        int         `gorm:"default:10" json:"priority"`
+	ContextType     string      `gorm:"size:20;not null" json:"context_type"` // static, api
+	TriggerKeywords StringArray `gorm:"type:jsonb" json:"trigger_keywords"`
+	StaticContent   string      `gorm:"type:text" json:"static_content"`
+	ApiConfig       JSONB       `gorm:"type:jsonb" json:"api_config"` // url, method, headers, body
+
+	// Relations
+	Organization *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
+}
+
+func (AIContext) TableName() string {
+	return "ai_contexts"
+}
+
+// AgentTransfer tracks when conversations are transferred to human agents
+type AgentTransfer struct {
+	BaseModel
+	OrganizationID  uuid.UUID  `gorm:"type:uuid;index;not null" json:"organization_id"`
+	ContactID       uuid.UUID  `gorm:"type:uuid;index;not null" json:"contact_id"`
+	WhatsAppAccount string     `gorm:"size:100;index;not null" json:"whatsapp_account"` // References WhatsAppAccount.Name
+	PhoneNumber     string     `gorm:"size:20;not null" json:"phone_number"`
+	Status          string     `gorm:"size:20;default:'active'" json:"status"` // active, resumed
+	AgentID         *uuid.UUID `gorm:"type:uuid" json:"agent_id,omitempty"`
+	Notes           string     `gorm:"type:text" json:"notes"`
+	TransferredAt   time.Time  `gorm:"autoCreateTime" json:"transferred_at"`
+	ResumedAt       *time.Time `json:"resumed_at,omitempty"`
+	ResumedBy       *uuid.UUID `gorm:"type:uuid" json:"resumed_by,omitempty"`
+
+	// Relations
+	Organization  *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
+	Contact       *Contact      `gorm:"foreignKey:ContactID" json:"contact,omitempty"`
+	Agent         *User         `gorm:"foreignKey:AgentID" json:"agent,omitempty"`
+	ResumedByUser *User         `gorm:"foreignKey:ResumedBy" json:"resumed_by_user,omitempty"`
+}
+
+func (AgentTransfer) TableName() string {
+	return "agent_transfers"
+}

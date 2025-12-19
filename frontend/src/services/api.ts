@@ -1,0 +1,195 @@
+import axios, { type AxiosInstance, type AxiosError, type InternalAxiosRequestConfig } from 'axios'
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
+
+export const api: AxiosInstance = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 30000,
+  headers: {
+    'Content-Type': 'application/json'
+  }
+})
+
+// Request interceptor to add auth token
+api.interceptors.request.use(
+  (config: InternalAxiosRequestConfig) => {
+    const token = localStorage.getItem('auth_token')
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
+    return config
+  },
+  (error: AxiosError) => {
+    return Promise.reject(error)
+  }
+)
+
+// Response interceptor for error handling
+api.interceptors.response.use(
+  (response) => response,
+  async (error: AxiosError) => {
+    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
+
+    // Handle 401 errors - try to refresh token
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true
+
+      const refreshToken = localStorage.getItem('refresh_token')
+      if (refreshToken) {
+        try {
+          const response = await axios.post(`${API_BASE_URL}/auth/refresh`, {
+            refresh_token: refreshToken
+          })
+
+          // fastglue wraps response in { status: "success", data: {...} }
+          const newToken = response.data.data.access_token
+          localStorage.setItem('auth_token', newToken)
+
+          originalRequest.headers.Authorization = `Bearer ${newToken}`
+          return api(originalRequest)
+        } catch {
+          // Refresh failed, clear auth and redirect to login
+          localStorage.removeItem('auth_token')
+          localStorage.removeItem('refresh_token')
+          localStorage.removeItem('user')
+          window.location.href = '/login'
+        }
+      } else {
+        window.location.href = '/login'
+      }
+    }
+
+    return Promise.reject(error)
+  }
+)
+
+// API service methods
+export const authService = {
+  login: (email: string, password: string) =>
+    api.post('/auth/login', { email, password }),
+
+  register: (data: { email: string; password: string; full_name: string; organization_name: string }) =>
+    api.post('/auth/register', data),
+
+  logout: () => api.post('/auth/logout'),
+
+  refreshToken: (refreshToken: string) =>
+    api.post('/auth/refresh', { refresh_token: refreshToken }),
+
+  me: () => api.get('/auth/me')
+}
+
+export const accountsService = {
+  list: () => api.get('/accounts'),
+  get: (id: string) => api.get(`/accounts/${id}`),
+  create: (data: any) => api.post('/accounts', data),
+  update: (id: string, data: any) => api.put(`/accounts/${id}`, data),
+  delete: (id: string) => api.delete(`/accounts/${id}`)
+}
+
+export const contactsService = {
+  list: (params?: { search?: string; page?: number; limit?: number }) =>
+    api.get('/contacts', { params }),
+  get: (id: string) => api.get(`/contacts/${id}`),
+  create: (data: any) => api.post('/contacts', data),
+  update: (id: string, data: any) => api.put(`/contacts/${id}`, data),
+  delete: (id: string) => api.delete(`/contacts/${id}`),
+  import: (file: File) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return api.post('/contacts/import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  }
+}
+
+export const messagesService = {
+  list: (contactId: string, params?: { page?: number; limit?: number }) =>
+    api.get(`/contacts/${contactId}/messages`, { params }),
+  send: (contactId: string, data: { type: string; content: any }) =>
+    api.post(`/contacts/${contactId}/messages`, data),
+  sendTemplate: (contactId: string, data: { template_name: string; components?: any[] }) =>
+    api.post(`/contacts/${contactId}/messages/template`, data)
+}
+
+export const templatesService = {
+  list: (params?: { status?: string; category?: string }) =>
+    api.get('/templates', { params }),
+  get: (id: string) => api.get(`/templates/${id}`),
+  create: (data: any) => api.post('/templates', data),
+  update: (id: string, data: any) => api.put(`/templates/${id}`, data),
+  delete: (id: string) => api.delete(`/templates/${id}`),
+  sync: () => api.post('/templates/sync')
+}
+
+export const flowsService = {
+  list: () => api.get('/flows'),
+  get: (id: string) => api.get(`/flows/${id}`),
+  create: (data: any) => api.post('/flows', data),
+  update: (id: string, data: any) => api.put(`/flows/${id}`, data),
+  delete: (id: string) => api.delete(`/flows/${id}`),
+  publish: (id: string) => api.post(`/flows/${id}/publish`)
+}
+
+export const campaignsService = {
+  list: (params?: { status?: string }) => api.get('/campaigns', { params }),
+  get: (id: string) => api.get(`/campaigns/${id}`),
+  create: (data: any) => api.post('/campaigns', data),
+  update: (id: string, data: any) => api.put(`/campaigns/${id}`, data),
+  delete: (id: string) => api.delete(`/campaigns/${id}`),
+  start: (id: string) => api.post(`/campaigns/${id}/start`),
+  pause: (id: string) => api.post(`/campaigns/${id}/pause`),
+  cancel: (id: string) => api.post(`/campaigns/${id}/cancel`),
+  stats: (id: string) => api.get(`/campaigns/${id}/stats`),
+  // Recipients
+  getRecipients: (id: string) => api.get(`/campaigns/${id}/recipients`),
+  addRecipients: (id: string, recipients: Array<{ phone_number: string; recipient_name?: string; template_params?: Record<string, any> }>) =>
+    api.post(`/campaigns/${id}/recipients/import`, { recipients })
+}
+
+export const chatbotService = {
+  // Settings
+  getSettings: () => api.get('/chatbot/settings'),
+  updateSettings: (data: any) => api.put('/chatbot/settings', data),
+
+  // Keywords
+  listKeywords: () => api.get('/chatbot/keywords'),
+  getKeyword: (id: string) => api.get(`/chatbot/keywords/${id}`),
+  createKeyword: (data: any) => api.post('/chatbot/keywords', data),
+  updateKeyword: (id: string, data: any) => api.put(`/chatbot/keywords/${id}`, data),
+  deleteKeyword: (id: string) => api.delete(`/chatbot/keywords/${id}`),
+
+  // Flows
+  listFlows: () => api.get('/chatbot/flows'),
+  getFlow: (id: string) => api.get(`/chatbot/flows/${id}`),
+  createFlow: (data: any) => api.post('/chatbot/flows', data),
+  updateFlow: (id: string, data: any) => api.put(`/chatbot/flows/${id}`, data),
+  deleteFlow: (id: string) => api.delete(`/chatbot/flows/${id}`),
+
+  // AI Contexts
+  listAIContexts: () => api.get('/chatbot/ai-contexts'),
+  getAIContext: (id: string) => api.get(`/chatbot/ai-contexts/${id}`),
+  createAIContext: (data: any) => api.post('/chatbot/ai-contexts', data),
+  updateAIContext: (id: string, data: any) => api.put(`/chatbot/ai-contexts/${id}`, data),
+  deleteAIContext: (id: string) => api.delete(`/chatbot/ai-contexts/${id}`),
+
+  // Sessions
+  listSessions: (params?: { status?: string; contact_id?: string }) =>
+    api.get('/chatbot/sessions', { params }),
+  getSession: (id: string) => api.get(`/chatbot/sessions/${id}`),
+  transferToAgent: (sessionId: string, agentId?: string) =>
+    api.post(`/chatbot/sessions/${sessionId}/transfer`, { agent_id: agentId })
+}
+
+export const analyticsService = {
+  dashboard: (params?: { from?: string; to?: string }) =>
+    api.get('/analytics/dashboard', { params }),
+  messages: (params?: { from?: string; to?: string; group_by?: string }) =>
+    api.get('/analytics/messages', { params }),
+  campaigns: (params?: { from?: string; to?: string }) =>
+    api.get('/analytics/campaigns', { params }),
+  chatbot: (params?: { from?: string; to?: string }) =>
+    api.get('/analytics/chatbot', { params })
+}
+
+export default api

@@ -1,0 +1,250 @@
+package models
+
+import (
+	"database/sql/driver"
+	"encoding/json"
+	"errors"
+	"time"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+)
+
+// JSONB is a custom type for PostgreSQL JSONB columns
+type JSONB map[string]interface{}
+
+func (j JSONB) Value() (driver.Value, error) {
+	if j == nil {
+		return nil, nil
+	}
+	return json.Marshal(j)
+}
+
+func (j *JSONB) Scan(value interface{}) error {
+	if value == nil {
+		*j = nil
+		return nil
+	}
+	bytes, ok := value.([]byte)
+	if !ok {
+		return errors.New("type assertion to []byte failed")
+	}
+	return json.Unmarshal(bytes, j)
+}
+
+// JSONBArray is a custom type for JSONB arrays
+type JSONBArray []interface{}
+
+func (j JSONBArray) Value() (driver.Value, error) {
+	if j == nil {
+		return nil, nil
+	}
+	return json.Marshal(j)
+}
+
+func (j *JSONBArray) Scan(value interface{}) error {
+	if value == nil {
+		*j = nil
+		return nil
+	}
+	bytes, ok := value.([]byte)
+	if !ok {
+		return errors.New("type assertion to []byte failed")
+	}
+	return json.Unmarshal(bytes, j)
+}
+
+// StringArray is a custom type for PostgreSQL text[] columns
+type StringArray []string
+
+func (s StringArray) Value() (driver.Value, error) {
+	if s == nil {
+		return nil, nil
+	}
+	return json.Marshal(s)
+}
+
+func (s *StringArray) Scan(value interface{}) error {
+	if value == nil {
+		*s = nil
+		return nil
+	}
+	bytes, ok := value.([]byte)
+	if !ok {
+		return errors.New("type assertion to []byte failed")
+	}
+	return json.Unmarshal(bytes, s)
+}
+
+// BaseModel contains common fields for all models
+type BaseModel struct {
+	ID        uuid.UUID      `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	CreatedAt time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+}
+
+// Organization represents a tenant in the multi-tenant system
+type Organization struct {
+	BaseModel
+	Name     string `gorm:"size:255;not null" json:"name"`
+	Slug     string `gorm:"size:100;uniqueIndex;not null" json:"slug"`
+	Settings JSONB  `gorm:"type:jsonb;default:'{}'" json:"settings"`
+
+	// Relations
+	Users            []User            `gorm:"foreignKey:OrganizationID" json:"users,omitempty"`
+	WhatsAppAccounts []WhatsAppAccount `gorm:"foreignKey:OrganizationID" json:"whatsapp_accounts,omitempty"`
+}
+
+func (Organization) TableName() string {
+	return "organizations"
+}
+
+// User represents a user in the system
+type User struct {
+	BaseModel
+	OrganizationID uuid.UUID `gorm:"type:uuid;index" json:"organization_id"`
+	Email          string    `gorm:"size:255;uniqueIndex;not null" json:"email"`
+	PasswordHash   string    `gorm:"size:255" json:"-"`
+	FullName       string    `gorm:"size:255" json:"full_name"`
+	Role           string    `gorm:"size:50;default:'agent'" json:"role"` // admin, manager, agent
+	Settings       JSONB     `gorm:"type:jsonb;default:'{}'" json:"settings"`
+	IsActive       bool      `gorm:"default:true" json:"is_active"`
+
+	// Relations
+	Organization *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
+}
+
+func (User) TableName() string {
+	return "users"
+}
+
+// WhatsAppAccount represents a WhatsApp Business Account
+type WhatsAppAccount struct {
+	BaseModel
+	OrganizationID     uuid.UUID `gorm:"type:uuid;index;not null" json:"organization_id"`
+	Name               string    `gorm:"size:100;uniqueIndex:idx_wa_org_name;not null" json:"name"` // Unique per org, used as reference
+	AppID              string    `gorm:"size:100" json:"app_id"`                                    // Meta App ID
+	PhoneID            string    `gorm:"size:100;not null" json:"phone_id"`
+	BusinessID         string    `gorm:"size:100;not null" json:"business_id"`
+	AccessToken        string    `gorm:"type:text;not null" json:"-"` // encrypted
+	WebhookVerifyToken string    `gorm:"size:255" json:"webhook_verify_token"`
+	APIVersion         string    `gorm:"size:20;default:'v21.0'" json:"api_version"`
+	IsDefaultIncoming  bool      `gorm:"default:false" json:"is_default_incoming"`
+	IsDefaultOutgoing  bool      `gorm:"default:false" json:"is_default_outgoing"`
+	AutoReadReceipt    bool      `gorm:"default:false" json:"auto_read_receipt"`
+	Status             string    `gorm:"size:20;default:'active'" json:"status"`
+
+	// Relations
+	Organization *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
+}
+
+func (WhatsAppAccount) TableName() string {
+	return "whatsapp_accounts"
+}
+
+// Contact represents a WhatsApp contact/profile
+type Contact struct {
+	BaseModel
+	OrganizationID     uuid.UUID  `gorm:"type:uuid;index;not null" json:"organization_id"`
+	PhoneNumber        string     `gorm:"size:20;not null" json:"phone_number"`
+	ProfileName        string     `gorm:"size:255" json:"profile_name"`
+	WhatsAppAccount    string     `gorm:"size:100;index" json:"whatsapp_account"` // References WhatsAppAccount.Name
+	AssignedUserID     *uuid.UUID `gorm:"type:uuid;index" json:"assigned_user_id,omitempty"`
+	LastMessageAt      *time.Time `json:"last_message_at,omitempty"`
+	LastMessagePreview string     `gorm:"type:text" json:"last_message_preview"`
+	IsRead             bool       `gorm:"default:true" json:"is_read"`
+	Tags               JSONBArray `gorm:"type:jsonb;default:'[]'" json:"tags"`
+	Metadata           JSONB      `gorm:"type:jsonb;default:'{}'" json:"metadata"`
+
+	// Relations
+	Organization *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
+	AssignedUser *User         `gorm:"foreignKey:AssignedUserID" json:"assigned_user,omitempty"`
+	Messages     []Message     `gorm:"foreignKey:ContactID" json:"messages,omitempty"`
+}
+
+func (Contact) TableName() string {
+	return "contacts"
+}
+
+// Message represents a WhatsApp message
+type Message struct {
+	BaseModel
+	OrganizationID    uuid.UUID  `gorm:"type:uuid;index;not null" json:"organization_id"`
+	WhatsAppAccount   string     `gorm:"size:100;index;not null" json:"whatsapp_account"` // References WhatsAppAccount.Name
+	ContactID         uuid.UUID  `gorm:"type:uuid;index;not null" json:"contact_id"`
+	WhatsAppMessageID string     `gorm:"column:whatsapp_message_id;size:255;index" json:"whatsapp_message_id"`
+	ConversationID    string     `gorm:"size:255;index" json:"conversation_id"`
+	Direction         string     `gorm:"size:10;not null" json:"direction"`    // incoming, outgoing
+	MessageType       string     `gorm:"size:20;not null" json:"message_type"` // text, image, video, audio, document, template, interactive, flow, reaction, location, contact
+	Content           string     `gorm:"type:text" json:"content"`
+	MediaURL          string     `gorm:"type:text" json:"media_url"`
+	MediaMimeType     string     `gorm:"size:100" json:"media_mime_type"`
+	MediaFilename     string     `gorm:"size:255" json:"media_filename"`
+	TemplateName      string     `gorm:"size:255" json:"template_name"`
+	TemplateParams    JSONB      `gorm:"type:jsonb" json:"template_params"`
+	InteractiveData   JSONB      `gorm:"type:jsonb" json:"interactive_data"`
+	FlowResponse      JSONB      `gorm:"type:jsonb" json:"flow_response"`
+	Status            string     `gorm:"size:20;default:'pending'" json:"status"` // pending, sent, delivered, read, failed
+	ErrorMessage      string     `gorm:"type:text" json:"error_message"`
+	IsReply           bool       `gorm:"default:false" json:"is_reply"`
+	ReplyToMessageID  *uuid.UUID `gorm:"type:uuid" json:"reply_to_message_id,omitempty"`
+	Metadata          JSONB      `gorm:"type:jsonb;default:'{}'" json:"metadata"`
+
+	// Relations
+	Organization   *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
+	Contact        *Contact      `gorm:"foreignKey:ContactID" json:"contact,omitempty"`
+	ReplyToMessage *Message      `gorm:"foreignKey:ReplyToMessageID" json:"reply_to_message,omitempty"`
+}
+
+func (Message) TableName() string {
+	return "messages"
+}
+
+// Template represents a WhatsApp message template
+type Template struct {
+	BaseModel
+	OrganizationID  uuid.UUID  `gorm:"type:uuid;index;not null" json:"organization_id"`
+	WhatsAppAccount string     `gorm:"size:100;index;not null" json:"whatsapp_account"` // References WhatsAppAccount.Name
+	MetaTemplateID  string     `gorm:"size:100" json:"meta_template_id"`
+	Name            string     `gorm:"size:255;not null" json:"name"`
+	DisplayName     string     `gorm:"size:255" json:"display_name"`
+	Language        string     `gorm:"size:10;not null" json:"language"`
+	Category        string     `gorm:"size:50" json:"category"`                       // MARKETING, UTILITY, AUTHENTICATION
+	Status          string     `gorm:"size:20;default:'PENDING'" json:"status"`       // PENDING, APPROVED, REJECTED
+	HeaderType      string     `gorm:"size:20" json:"header_type"`                    // TEXT, IMAGE, DOCUMENT, VIDEO
+	HeaderContent   string     `gorm:"type:text" json:"header_content"`
+	BodyContent     string     `gorm:"type:text;not null" json:"body_content"`
+	FooterContent   string     `gorm:"type:text" json:"footer_content"`
+	Buttons         JSONBArray `gorm:"type:jsonb;default:'[]'" json:"buttons"`
+	SampleValues    JSONBArray `gorm:"type:jsonb;default:'[]'" json:"sample_values"`
+
+	// Relations
+	Organization *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
+}
+
+func (Template) TableName() string {
+	return "templates"
+}
+
+// WhatsAppFlow represents a WhatsApp interactive flow
+type WhatsAppFlow struct {
+	BaseModel
+	OrganizationID  uuid.UUID  `gorm:"type:uuid;index;not null" json:"organization_id"`
+	WhatsAppAccount string     `gorm:"size:100;index;not null" json:"whatsapp_account"` // References WhatsAppAccount.Name
+	MetaFlowID      string     `gorm:"size:100" json:"meta_flow_id"`
+	Name            string     `gorm:"size:255;not null" json:"name"`
+	Status          string     `gorm:"size:20;default:'DRAFT'" json:"status"` // DRAFT, PUBLISHED, DEPRECATED, BLOCKED
+	Category        string     `gorm:"size:50" json:"category"`
+	JSONVersion     string     `gorm:"size:10;default:'6.0'" json:"json_version"`
+	FlowJSON        JSONB      `gorm:"type:jsonb" json:"flow_json"`
+	Screens         JSONBArray `gorm:"type:jsonb;default:'[]'" json:"screens"`
+	PreviewURL      string     `gorm:"type:text" json:"preview_url"`
+
+	// Relations
+	Organization *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
+}
+
+func (WhatsAppFlow) TableName() string {
+	return "whatsapp_flows"
+}

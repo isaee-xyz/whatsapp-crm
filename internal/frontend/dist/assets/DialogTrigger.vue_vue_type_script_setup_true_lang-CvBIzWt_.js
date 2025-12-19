@@ -1,0 +1,1 @@
+import{o}from"./createLucideIcon-CJWRy_ZI.js";import{d as a,k as r,w as s,m as t,b as n,o as _}from"./index-CYNh7eqI.js";const p=a({__name:"DialogTrigger",setup(c){return(e,i)=>(_(),r(n(o),{"as-child":""},{default:s(()=>[t(e.$slots,"default")]),_:3}))}});export{p as _};

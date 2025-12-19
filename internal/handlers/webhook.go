@@ -6,7 +6,7 @@ import (
 
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
-	"github.com/whatomate/whatomate/internal/models"
+	"github.com/shridarpatil/whatomate/internal/models"
 )
 
 // WebhookVerify handles Meta's webhook verification challenge

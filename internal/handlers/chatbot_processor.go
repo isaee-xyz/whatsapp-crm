@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/whatomate/whatomate/internal/models"
+	"github.com/shridarpatil/whatomate/internal/models"
 	"gorm.io/gorm"
 )
 

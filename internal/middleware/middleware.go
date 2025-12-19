@@ -7,7 +7,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/valyala/fasthttp"
-	"github.com/whatomate/whatomate/internal/models"
+	"github.com/shridarpatil/whatomate/internal/models"
 	"github.com/zerodha/fastglue"
 	"github.com/zerodha/logf"
 	"gorm.io/gorm"

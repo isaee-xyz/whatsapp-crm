@@ -1,4 +1,4 @@
-.PHONY: all build run test clean docker-build docker-up docker-down migrate frontend-dev frontend-build
+.PHONY: all build build-prod run test clean docker-build docker-up docker-down migrate frontend-dev frontend-build
 
 # Go parameters
 GOCMD=go
@@ -8,15 +8,32 @@ GOGET=$(GOCMD) get
 GOMOD=$(GOCMD) mod
 BINARY_NAME=whatomate
 BINARY_PATH=./cmd/server
+VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+BUILD_TIME=$(shell date -u '+%Y-%m-%d_%H:%M:%S')
+LDFLAGS=-ldflags "-s -w -X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME)"
 
 # Docker parameters
 DOCKER_COMPOSE=docker compose -f docker/docker-compose.yml
 
 all: build
 
-# Build the backend
+# Build the backend (development - without frontend)
 build:
 	$(GOBUILD) -o $(BINARY_NAME) $(BINARY_PATH)
+
+# Build production binary with embedded frontend
+build-prod: frontend-build embed-frontend
+	CGO_ENABLED=0 $(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME) $(BINARY_PATH)
+	@echo "Production binary built: $(BINARY_NAME)"
+	@echo "Version: $(VERSION)"
+	@ls -lh $(BINARY_NAME)
+
+# Copy frontend build to embed directory
+embed-frontend:
+	@echo "Copying frontend build to embed directory..."
+	@rm -rf internal/frontend/dist/*
+	@cp -r frontend/dist/* internal/frontend/dist/
+	@echo "Frontend embedded successfully"
 
 # Run the backend locally
 run:
@@ -104,21 +121,33 @@ swagger:
 # Help
 help:
 	@echo "Available targets:"
-	@echo "  build          - Build the backend binary"
+	@echo ""
+	@echo "Production:"
+	@echo "  build-prod     - Build single binary with embedded frontend"
+	@echo ""
+	@echo "Development:"
+	@echo "  build          - Build the backend binary (without frontend)"
 	@echo "  run            - Run the backend locally"
 	@echo "  run-migrate    - Run the backend with database migrations"
+	@echo "  dev            - Run both backend and frontend in development mode"
+	@echo ""
+	@echo "Frontend:"
+	@echo "  frontend-install - Install frontend dependencies"
+	@echo "  frontend-dev   - Run frontend in development mode"
+	@echo "  frontend-build - Build frontend for production"
+	@echo ""
+	@echo "Testing:"
 	@echo "  test           - Run tests"
 	@echo "  test-coverage  - Run tests with coverage report"
-	@echo "  clean          - Remove build artifacts"
-	@echo "  deps           - Download dependencies"
-	@echo "  deps-update    - Update dependencies"
+	@echo ""
+	@echo "Docker:"
 	@echo "  docker-build   - Build Docker images"
 	@echo "  docker-up      - Start Docker containers"
 	@echo "  docker-down    - Stop Docker containers"
 	@echo "  docker-logs    - View Docker logs"
-	@echo "  frontend-install - Install frontend dependencies"
-	@echo "  frontend-dev   - Run frontend in development mode"
-	@echo "  frontend-build - Build frontend for production"
-	@echo "  dev            - Run both backend and frontend in development mode"
+	@echo ""
+	@echo "Other:"
+	@echo "  clean          - Remove build artifacts"
+	@echo "  deps           - Download dependencies"
 	@echo "  lint           - Run linter"
 	@echo "  fmt            - Format code"

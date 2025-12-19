@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/whatomate/whatomate/internal/config"
-	"github.com/whatomate/whatomate/internal/models"
+	"github.com/shridarpatil/whatomate/internal/config"
+	"github.com/shridarpatil/whatomate/internal/models"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"

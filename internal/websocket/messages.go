@@ -1,0 +1,37 @@
+package websocket
+
+import "github.com/google/uuid"
+
+// WSMessage represents a WebSocket message
+type WSMessage struct {
+	Type    string `json:"type"`
+	Payload any    `json:"payload"`
+}
+
+// Message types
+const (
+	TypeNewMessage    = "new_message"
+	TypeStatusUpdate  = "status_update"
+	TypeContactUpdate = "contact_update"
+	TypeSetContact    = "set_contact"
+	TypePing          = "ping"
+	TypePong          = "pong"
+)
+
+// BroadcastMessage represents a message to be broadcast to clients
+type BroadcastMessage struct {
+	OrgID     uuid.UUID
+	ContactID uuid.UUID // Optional: only send to users viewing this contact
+	Message   WSMessage
+}
+
+// SetContactPayload is the payload for set_contact messages from client
+type SetContactPayload struct {
+	ContactID string `json:"contact_id"`
+}
+
+// StatusUpdatePayload is the payload for status_update messages
+type StatusUpdatePayload struct {
+	MessageID string `json:"message_id"`
+	Status    string `json:"status"`
+}

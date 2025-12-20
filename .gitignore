@@ -1,6 +1,7 @@
 # Binaries
 /server
 /whatomate
+bin/
 *.exe
 *.exe~
 *.dll

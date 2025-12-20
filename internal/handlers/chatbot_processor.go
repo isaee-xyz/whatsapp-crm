@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shridarpatil/whatomate/internal/models"
+	"github.com/shridarpatil/whatomate/internal/websocket"
 	"github.com/shridarpatil/whatomate/pkg/whatsapp"
 	"gorm.io/gorm"
 )
@@ -1479,4 +1480,22 @@ func (a *App) saveIncomingMessage(account *models.WhatsAppAccount, contact *mode
 	})
 
 	a.Log.Info("Saved incoming message", "message_id", message.ID, "contact_id", contact.ID)
+
+	// Broadcast new message via WebSocket
+	if a.WSHub != nil {
+		a.WSHub.BroadcastToOrg(account.OrganizationID, websocket.WSMessage{
+			Type: websocket.TypeNewMessage,
+			Payload: map[string]any{
+				"id":           message.ID,
+				"contact_id":   contact.ID,
+				"direction":    message.Direction,
+				"message_type": message.MessageType,
+				"content":      map[string]string{"body": message.Content},
+				"status":       message.Status,
+				"wamid":        message.WhatsAppMessageID,
+				"created_at":   message.CreatedAt,
+				"updated_at":   message.UpdatedAt,
+			},
+		})
+	}
 }

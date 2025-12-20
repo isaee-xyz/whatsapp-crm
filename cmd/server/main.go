@@ -13,6 +13,7 @@ import (
 	"github.com/shridarpatil/whatomate/internal/frontend"
 	"github.com/shridarpatil/whatomate/internal/handlers"
 	"github.com/shridarpatil/whatomate/internal/middleware"
+	"github.com/shridarpatil/whatomate/internal/websocket"
 	"github.com/shridarpatil/whatomate/pkg/whatsapp"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
@@ -85,6 +86,11 @@ func main() {
 	// Initialize WhatsApp client
 	waClient := whatsapp.New(lo)
 
+	// Initialize WebSocket hub
+	wsHub := websocket.NewHub(lo)
+	go wsHub.Run()
+	lo.Info("WebSocket hub started")
+
 	// Initialize app with dependencies
 	app := &handlers.App{
 		Config:   cfg,
@@ -92,6 +98,7 @@ func main() {
 		Redis:    rdb,
 		Log:      lo,
 		WhatsApp: waClient,
+		WSHub:    wsHub,
 	}
 
 	// Setup middleware
@@ -145,6 +152,9 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger) {
 	g.GET("/api/webhook", app.WebhookVerify)
 	g.POST("/api/webhook", app.WebhookHandler)
 
+	// WebSocket route (auth handled in handler via query param)
+	g.GET("/ws", app.WebSocketHandler)
+
 	// For protected routes, we'll use a path-based middleware approach
 	// Apply auth middleware globally but check path in the middleware
 	g.Before(func(r *fastglue.Request) *fastglue.Request {
@@ -152,7 +162,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger) {
 		// Skip auth for public routes
 		if path == "/health" || path == "/ready" ||
 			path == "/api/auth/login" || path == "/api/auth/register" || path == "/api/auth/refresh" ||
-			path == "/api/webhook" {
+			path == "/api/webhook" || path == "/ws" {
 			return r
 		}
 		// Apply auth for all other /api routes

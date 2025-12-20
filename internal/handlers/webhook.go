@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/shridarpatil/whatomate/internal/models"
+	"github.com/shridarpatil/whatomate/internal/websocket"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
 )
@@ -342,4 +343,15 @@ func (a *App) updateMessageStatus(whatsappMsgID, statusValue string, errors []We
 	}
 
 	a.Log.Info("Updated message status", "message_id", message.ID, "status", statusValue)
+
+	// Broadcast status update via WebSocket
+	if a.WSHub != nil {
+		a.WSHub.BroadcastToOrg(message.OrganizationID, websocket.WSMessage{
+			Type: websocket.TypeStatusUpdate,
+			Payload: map[string]any{
+				"message_id": message.ID.String(),
+				"status":     statusValue,
+			},
+		})
+	}
 }

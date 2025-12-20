@@ -2,6 +2,7 @@
 import { ref, watch, onMounted, onUnmounted, nextTick, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useContactsStore, type Contact, type Message } from '@/stores/contacts'
+import { wsService } from '@/services/websocket'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -35,30 +36,21 @@ const contactsStore = useContactsStore()
 const messageInput = ref('')
 const messagesEndRef = ref<HTMLElement | null>(null)
 const isSending = ref(false)
-const pollInterval = ref<number | null>(null)
 
 const contactId = computed(() => route.params.contactId as string | undefined)
 
-// Start polling for message updates
-function startPolling() {
-  stopPolling()
-  pollInterval.value = window.setInterval(async () => {
-    if (contactsStore.currentContact) {
-      await contactsStore.fetchMessages(contactsStore.currentContact.id)
-    }
-  }, 3000) // Poll every 3 seconds
-}
-
-function stopPolling() {
-  if (pollInterval.value) {
-    clearInterval(pollInterval.value)
-    pollInterval.value = null
+// Initialize WebSocket connection
+function initWebSocket() {
+  const token = localStorage.getItem('auth_token')
+  if (token) {
+    wsService.connect(token)
   }
 }
 
-// Fetch contacts on mount
+// Fetch contacts on mount and connect WebSocket
 onMounted(async () => {
   await contactsStore.fetchContacts()
+  initWebSocket()
 
   if (contactId.value) {
     await selectContact(contactId.value)
@@ -66,7 +58,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  stopPolling()
+  wsService.setCurrentContact(null)
 })
 
 // Watch for route changes
@@ -74,7 +66,7 @@ watch(contactId, async (newId) => {
   if (newId) {
     await selectContact(newId)
   } else {
-    stopPolling()
+    wsService.setCurrentContact(null)
     contactsStore.setCurrentContact(null)
     contactsStore.clearMessages()
   }
@@ -86,9 +78,15 @@ async function selectContact(id: string) {
     contactsStore.setCurrentContact(contact)
     await contactsStore.fetchMessages(id)
     scrollToBottom()
-    startPolling()
+    // Tell WebSocket server which contact we're viewing
+    wsService.setCurrentContact(id)
   }
 }
+
+// Watch for new messages to auto-scroll
+watch(() => contactsStore.messages.length, () => {
+  scrollToBottom()
+})
 
 function handleContactClick(contact: Contact) {
   router.push(`/chat/${contact.id}`)

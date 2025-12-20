@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shridarpatil/whatomate/internal/models"
+	"github.com/shridarpatil/whatomate/internal/websocket"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
 )
@@ -339,6 +340,23 @@ func (a *App) SendMessage(r *fastglue.Request) error {
 		Status:      message.Status,
 		CreatedAt:   message.CreatedAt,
 		UpdatedAt:   message.UpdatedAt,
+	}
+
+	// Broadcast new outgoing message via WebSocket
+	if a.WSHub != nil {
+		a.WSHub.BroadcastToOrg(orgID, websocket.WSMessage{
+			Type: websocket.TypeNewMessage,
+			Payload: map[string]any{
+				"id":           message.ID,
+				"contact_id":   message.ContactID,
+				"direction":    message.Direction,
+				"message_type": message.MessageType,
+				"content":      map[string]string{"body": message.Content},
+				"status":       message.Status,
+				"created_at":   message.CreatedAt,
+				"updated_at":   message.UpdatedAt,
+			},
+		})
 	}
 
 	return r.SendEnvelope(response)

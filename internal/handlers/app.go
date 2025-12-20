@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/shridarpatil/whatomate/internal/config"
+	"github.com/shridarpatil/whatomate/internal/websocket"
 	"github.com/shridarpatil/whatomate/pkg/whatsapp"
 	"github.com/zerodha/fastglue"
 	"github.com/zerodha/logf"
@@ -19,6 +20,7 @@ type App struct {
 	Redis    *redis.Client
 	Log      logf.Logger
 	WhatsApp *whatsapp.Client
+	WSHub    *websocket.Hub
 }
 
 // getOrgIDFromContext extracts organization ID from request context (set by auth middleware)

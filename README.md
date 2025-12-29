@@ -9,7 +9,7 @@ A modern WhatsApp Business Platform built with Go (Fastglue) and Vue.js (shadcn-
 - **WhatsApp Cloud API Integration**: Connect with Meta's WhatsApp Business API
 - **Real-time Chat**: Live messaging with WebSocket support
 - **Template Management**: Create and manage message templates
-- **Bulk Messaging**: Send campaigns to multiple contacts
+- **Bulk Messaging**: Send campaigns to multiple contacts with retry support for failed messages
 - **Chatbot Automation**:
   - Keyword-based auto-replies
   - Conversation flows with branching logic and skip conditions
@@ -68,8 +68,9 @@ A modern WhatsApp Business Platform built with Go (Fastglue) and Vue.js (shadcn-
 ### Backend
 - **Go 1.21+** with [Fastglue](https://github.com/zerodha/fastglue) (fasthttp-based HTTP framework)
 - **PostgreSQL** for data storage with GORM v2
-- **Redis** for caching and pub/sub
+- **Redis** for caching, pub/sub, and job queues (Redis Streams)
 - **JWT** for authentication
+- **Worker Service** for reliable campaign processing
 
 ### Frontend
 - **Vue 3** with Composition API and TypeScript
@@ -84,14 +85,17 @@ A modern WhatsApp Business Platform built with Go (Fastglue) and Vue.js (shadcn-
 ```
 whatomate/
 ├── cmd/
-│   └── server/           # Application entry point
+│   ├── server/           # Main application entry point
+│   └── worker/           # Standalone worker entry point
 ├── internal/
 │   ├── config/           # Configuration management
 │   ├── database/         # Database connections
 │   ├── handlers/         # HTTP handlers
 │   ├── middleware/       # HTTP middleware
 │   ├── models/           # Data models
-│   └── services/         # Business logic
+│   ├── queue/            # Redis Streams job queue
+│   ├── services/         # Business logic
+│   └── worker/           # Worker service for job processing
 ├── docker/               # Docker configuration
 ├── frontend/             # Vue.js frontend
 │   ├── src/
@@ -133,8 +137,14 @@ whatomate/
    # Run database migrations
    make migrate
 
-   # Start the server
+   # Start the server (includes 1 embedded worker by default)
    make run
+
+   # Or run with more workers for higher throughput
+   go run cmd/server/main.go -workers=3
+
+   # Or disable embedded workers (run workers separately)
+   go run cmd/server/main.go -workers=0
    ```
 
 3. **Start frontend**:
@@ -152,6 +162,17 @@ docker compose up -d
 ```
 
 Access the application at `http://localhost:3000`
+
+#### Scaling Workers
+
+For high-volume campaign processing, you can scale the worker service:
+
+```bash
+# Run with 3 worker instances
+docker compose up -d --scale worker=3
+```
+
+Workers use Redis Streams consumer groups, ensuring each job is processed by exactly one worker.
 
 ### Default Admin Login
 
@@ -205,6 +226,53 @@ anthropic_api_key = ""
 google_api_key = ""
 ```
 
+## Worker Service
+
+The worker service handles bulk campaign message processing using Redis Streams for reliable job queuing.
+
+### Architecture
+
+```
+┌─────────────┐     Redis Streams      ┌─────────────┐
+│   Server    │ ─────────────────────► │  Worker 1   │
+│  (enqueue)  │   whatomate:campaigns  ├─────────────┤
+└─────────────┘         │              │  Worker 2   │
+                        └─────────────►│  Worker N   │
+                                       └─────────────┘
+```
+
+### Features
+
+- **Reliable Processing**: Jobs persist in Redis until acknowledged
+- **Horizontal Scaling**: Add more workers to increase throughput
+- **Graceful Shutdown**: Workers complete current job before stopping
+- **Automatic Recovery**: Stale jobs are reclaimed on worker startup
+
+### Running Workers
+
+**Embedded Mode** (default): The server runs workers internally.
+
+```bash
+# Default: 1 worker
+./whatomate
+
+# Run with 3 embedded workers
+./whatomate -workers=3
+
+# Disable embedded workers
+./whatomate -workers=0
+```
+
+**Standalone Mode**: Run workers as separate processes.
+
+```bash
+# Run standalone worker
+go run cmd/worker/main.go
+
+# Or with Docker Compose
+docker compose up -d --scale worker=3
+```
+
 ## API Endpoints
 
 ### Authentication
@@ -236,6 +304,20 @@ google_api_key = ""
 ### Templates
 - `GET /api/templates` - List templates
 - `POST /api/templates/sync` - Sync from Meta
+
+### Campaigns
+- `GET /api/campaigns` - List campaigns
+- `POST /api/campaigns` - Create campaign
+- `GET /api/campaigns/:id` - Get campaign details
+- `PUT /api/campaigns/:id` - Update campaign
+- `DELETE /api/campaigns/:id` - Delete campaign
+- `POST /api/campaigns/:id/start` - Start campaign (queues for processing)
+- `POST /api/campaigns/:id/pause` - Pause campaign
+- `POST /api/campaigns/:id/cancel` - Cancel campaign
+- `POST /api/campaigns/:id/retry-failed` - Retry failed messages
+- `GET /api/campaigns/:id/stats` - Get campaign statistics
+- `GET /api/campaigns/:id/recipients` - List recipients
+- `POST /api/campaigns/:id/recipients/import` - Import recipients
 
 ### WhatsApp Flows
 - `GET /api/flows` - List flows

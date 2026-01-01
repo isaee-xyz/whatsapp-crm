@@ -360,6 +360,11 @@ func (a *App) GetMessages(r *fastglue.Request) error {
 		response[i] = msgResp
 	}
 
+	// Get unread incoming messages for auto read receipt
+	var unreadMessages []models.Message
+	a.DB.Where("contact_id = ? AND direction = ? AND status != ?", contactID, "incoming", "read").
+		Find(&unreadMessages)
+
 	// Mark incoming messages as read
 	a.DB.Model(&models.Message{}).
 		Where("contact_id = ? AND direction = ?", contactID, "incoming").
@@ -367,6 +372,29 @@ func (a *App) GetMessages(r *fastglue.Request) error {
 
 	// Update contact read status
 	a.DB.Model(&contact).Update("is_read", true)
+
+	// Send read receipts to WhatsApp if auto read receipt is enabled
+	if len(unreadMessages) > 0 && contact.WhatsAppAccount != "" {
+		var account models.WhatsAppAccount
+		if err := a.DB.Where("organization_id = ? AND name = ?", orgID, contact.WhatsAppAccount).First(&account).Error; err == nil {
+			if account.AutoReadReceipt {
+				go func() {
+					waAccount := &whatsapp.Account{
+						PhoneID:     account.PhoneID,
+						AccessToken: account.AccessToken,
+						APIVersion:  a.Config.WhatsApp.APIVersion,
+					}
+					for _, msg := range unreadMessages {
+						if msg.WhatsAppMessageID != "" {
+							if err := a.WhatsApp.MarkMessageRead(context.Background(), waAccount, msg.WhatsAppMessageID); err != nil {
+								a.Log.Error("Failed to send read receipt", "error", err, "message_id", msg.WhatsAppMessageID)
+							}
+						}
+					}
+				}()
+			}
+		}
+	}
 
 	return r.SendEnvelope(map[string]any{
 		"messages": response,

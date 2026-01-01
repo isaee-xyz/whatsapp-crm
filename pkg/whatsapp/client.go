@@ -355,3 +355,23 @@ func (c *Client) SendAudioMessage(ctx context.Context, account *Account, phoneNu
 	c.Log.Info("Audio message sent", "message_id", messageID, "phone", phoneNumber)
 	return messageID, nil
 }
+
+// MarkMessageRead sends a read receipt for a message
+func (c *Client) MarkMessageRead(ctx context.Context, account *Account, messageID string) error {
+	payload := map[string]interface{}{
+		"messaging_product": "whatsapp",
+		"status":            "read",
+		"message_id":        messageID,
+	}
+
+	url := c.buildMessagesURL(account)
+	c.Log.Debug("Sending read receipt", "message_id", messageID)
+
+	_, err := c.doRequest(ctx, "POST", url, payload, account.AccessToken)
+	if err != nil {
+		return fmt.Errorf("failed to send read receipt: %w", err)
+	}
+
+	c.Log.Debug("Read receipt sent", "message_id", messageID)
+	return nil
+}

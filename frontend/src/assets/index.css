@@ -235,6 +235,23 @@
   background: rgba(233, 237, 239, 0.12);
 }
 
+/* Button reply - WhatsApp style (shows selected button) */
+.button-reply-bubble {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(0, 165, 244, 0.1);
+  border-left: 3px solid #00a5f4;
+  border-radius: 4px;
+  color: #00a5f4;
+  font-weight: 500;
+}
+
+.dark .button-reply-bubble {
+  background: rgba(0, 165, 244, 0.15);
+}
+
 /* WhatsApp-style interactive buttons */
 .interactive-buttons {
   border-radius: 0 0 7.5px 7.5px;

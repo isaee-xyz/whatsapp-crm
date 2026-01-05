@@ -566,6 +566,13 @@ function getMessageContent(message: Message): string {
   if (message.message_type === 'text') {
     return message.content?.body || ''
   }
+  if (message.message_type === 'button_reply') {
+    // Button reply stores the selected button title in content
+    if (typeof message.content === 'string') {
+      return message.content
+    }
+    return message.content?.body || ''
+  }
   if (message.message_type === 'interactive') {
     // Interactive messages store body text in content (string) or content.body or interactive_data.body
     if (typeof message.content === 'string') {
@@ -1210,8 +1217,13 @@ async function sendMediaMessage() {
                     <span class="text-sm italic">This message type is not supported</span>
                   </div>
                 </div>
+                <!-- Button reply - WhatsApp style -->
+                <div v-if="message.message_type === 'button_reply'" class="button-reply-bubble">
+                  <span class="whitespace-pre-wrap break-words">{{ getMessageContent(message) }}</span>
+                  <span class="chat-bubble-time"><span>{{ formatMessageTime(message.created_at) }}</span></span>
+                </div>
                 <!-- Text content (for text messages or captions) -->
-                <span v-if="getMessageContent(message)" class="whitespace-pre-wrap break-words">{{ getMessageContent(message) }}<span class="chat-bubble-time"><span>{{ formatMessageTime(message.created_at) }}</span><component v-if="message.direction === 'outgoing'" :is="getMessageStatusIcon(message.status)" :class="['h-5 w-5 status-icon', getMessageStatusClass(message.status)]" /></span></span>
+                <span v-else-if="getMessageContent(message)" class="whitespace-pre-wrap break-words">{{ getMessageContent(message) }}<span class="chat-bubble-time"><span>{{ formatMessageTime(message.created_at) }}</span><component v-if="message.direction === 'outgoing'" :is="getMessageStatusIcon(message.status)" :class="['h-5 w-5 status-icon', getMessageStatusClass(message.status)]" /></span></span>
                 <!-- Fallback for media without URL -->
                 <span v-else-if="isMediaMessage(message) && !message.media_url" class="text-muted-foreground italic">[{{ message.message_type.charAt(0).toUpperCase() + message.message_type.slice(1) }}]<span class="chat-bubble-time"><span>{{ formatMessageTime(message.created_at) }}</span><component v-if="message.direction === 'outgoing'" :is="getMessageStatusIcon(message.status)" :class="['h-5 w-5 status-icon', getMessageStatusClass(message.status)]" /></span></span>
                 <!-- Interactive buttons - WhatsApp style -->

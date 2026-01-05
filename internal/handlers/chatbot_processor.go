@@ -143,11 +143,13 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 		if msg.Interactive.ButtonReply != nil {
 			messageText = msg.Interactive.ButtonReply.Title
 			buttonID = msg.Interactive.ButtonReply.ID
+			messageType = "button_reply"
 		}
 		// Handle list reply
 		if msg.Interactive.ListReply != nil {
 			messageText = msg.Interactive.ListReply.Title
 			buttonID = msg.Interactive.ListReply.ID
+			messageType = "button_reply"
 		}
 	} else if msg.Type == "image" && msg.Image != nil {
 		// Handle image message

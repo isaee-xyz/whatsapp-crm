@@ -80,11 +80,10 @@ func Handler(basePath string) fasthttp.RequestHandler {
 	return fasthttpadaptor.NewFastHTTPHandler(spaHandler)
 }
 
-// IsEmbedded returns true if the frontend dist folder is embedded
+// IsEmbedded returns true if the frontend dist folder is embedded and contains index.html
 func IsEmbedded() bool {
-	entries, err := distFS.ReadDir("dist")
-	if err != nil {
+	if _, err := distFS.Open("dist/index.html"); err != nil {
 		return false
 	}
-	return len(entries) > 0
+	return true
 }

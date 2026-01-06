@@ -8,10 +8,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
-	"github.com/shridarpatil/whatomate/internal/config"
-	"github.com/shridarpatil/whatomate/internal/models"
-	"github.com/shridarpatil/whatomate/internal/queue"
-	"github.com/shridarpatil/whatomate/pkg/whatsapp"
+	"github.com/isaee-xyz/whatomate/internal/config"
+	"github.com/isaee-xyz/whatomate/internal/models"
+	"github.com/isaee-xyz/whatomate/internal/queue"
+	"github.com/isaee-xyz/whatomate/pkg/whatsapp"
 	"github.com/zerodha/logf"
 	"gorm.io/gorm"
 )

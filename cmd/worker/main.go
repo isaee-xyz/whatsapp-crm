@@ -7,9 +7,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/shridarpatil/whatomate/internal/config"
-	"github.com/shridarpatil/whatomate/internal/database"
-	"github.com/shridarpatil/whatomate/internal/worker"
+	"github.com/isaee-xyz/whatomate/internal/config"
+	"github.com/isaee-xyz/whatomate/internal/database"
+	"github.com/isaee-xyz/whatomate/internal/worker"
 	"github.com/zerodha/logf"
 )
 

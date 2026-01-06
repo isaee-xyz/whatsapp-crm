@@ -1,4 +1,3 @@
-<a href="https://zerodha.tech"><img src="https://zerodha.tech/static/images/github-badge.svg" align="right" alt="Zerodha Tech Badge" /></a>
 # Whatomate
 
 A modern WhatsApp Business Platform built with Go (Fastglue) and Vue.js (shadcn-vue).

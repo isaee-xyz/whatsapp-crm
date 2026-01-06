@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shridarpatil/whatomate/internal/models"
+	"github.com/isaee-xyz/whatomate/internal/models"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
 	"golang.org/x/oauth2"

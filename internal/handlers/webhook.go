@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/shridarpatil/whatomate/internal/models"
-	"github.com/shridarpatil/whatomate/internal/websocket"
+	"github.com/isaee-xyz/whatomate/internal/models"
+	"github.com/isaee-xyz/whatomate/internal/websocket"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
 )

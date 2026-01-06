@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shridarpatil/whatomate/internal/models"
+	"github.com/isaee-xyz/whatomate/internal/models"
 	"gorm.io/gorm"
 )
 
